@@ -1,0 +1,102 @@
+# More documentation here: https://serverless.com/framework/docs/providers/aws/guide/serverless.yml/
+service: logsSlackIntegration
+
+custom:
+  editable:
+    timeout: 28
+    handlerFile: handler
+    description: Post watched logs from cloudwatch to slack webhook
+    scheduleRate: rate(5 minutes)
+  stage: ${opt:stage, self:provider.stage}
+
+provider:
+  name: aws
+  stage: dev
+  region: eu-central-1
+  stackName: ${self:custom.stage}-${self:service}
+  deploymentBucket:
+    name: dataplattform-v2-deploymentbucket
+  runtime: python3.7
+  memorySize: 1024 # MB
+  timeout: ${self:custom.editable.timeout} # seconds
+  tags:
+    Project: DataplattformLogsSlackIntegration
+
+package:
+  individually: true
+  exclude:
+    - "./**"
+
+functions:
+  slackIntegration:
+    handler: ${self:custom.editable.handlerFile}.handler
+    name: ${self:custom.stage}-${self:service}
+    description: ${self:custom.editable.description}
+    role: !GetAtt AccessRole.Arn
+    package:
+      include:
+        - '*.py' # Files to include in deployment
+    environment: # Environment variables, often stored in SSM
+      STAGE: ${self:custom.stage}
+      SERVICE: ${self:service}
+      SLACK_CALLBACK_SSM_NAME: slack_callback_url
+    events: # How to trigger the lambda
+      - schedule:
+          name: ${self:custom.stage}-${self:service}-timer
+          description: ${self:custom.editable.description}
+          rate: ${self:custom.editable.scheduleRate}
+          enabled: true
+
+resources:
+  Resources:
+    AccessRole:
+      Type: AWS::IAM::Role
+      Properties:
+        RoleName: ${self:custom.stage}-${self:service}
+        AssumeRolePolicyDocument:
+          Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Principal:
+                Service:
+                  - lambda.amazonaws.com
+              Action: sts:AssumeRole
+        ManagedPolicyArns:
+          - "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+        Policies:
+          - PolicyName: ${self:custom.stage}-CloudWatchLogGroups-${self:service}
+            PolicyDocument:
+              Version: "2012-10-17"
+              Statement:
+                - Effect: Allow
+                  Action:
+                    - logs:DescribeLogGroups
+                    - logs:GetQueryResults
+                  Resource: 
+                    - !Sub 'arn:aws:logs:#{AWS::Region}:#{AWS::AccountId}:log-group:'
+                    - !Sub 'arn:aws:logs:#{AWS::Region}:#{AWS::AccountId}:log-group::log-stream:'
+          - PolicyName: ${self:custom.stage}-CloudWatchLogQuery-${self:service}
+            PolicyDocument:
+              Version: "2012-10-17"
+              Statement:
+                - Effect: Allow
+                  Action:
+                    - logs:StartQuery
+                    - logs:StopQuery
+                  Resource: 
+                    - !Sub 'arn:aws:logs:#{AWS::Region}:#{AWS::AccountId}:log-group:/aws/lambda/*'
+                    - !Sub 'arn:aws:logs:#{AWS::Region}:#{AWS::AccountId}:log-group:/aws/lambda/*:log-stream:'
+          - PolicyName: ${self:custom.stage}-ParameterStore-${self:service}
+            PolicyDocument:
+              Version: '2012-10-17'
+              Statement:
+                - Effect: Allow
+                  Action:
+                    - 'ssm:GetParameter*'
+                    - 'ssm:PutParameter*'
+                  Resource: !Sub 'arn:aws:ssm:#{AWS::Region}:#{AWS::AccountId}:parameter/${self:custom.stage}/${self:service}/*'
+  Outputs: # The outputs that your AWS CloudFormation Stack should produce. This allows references between services.
+
+plugins:
+  - serverless-python-requirements
+  - serverless-pseudo-parameters
