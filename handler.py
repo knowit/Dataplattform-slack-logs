@@ -89,7 +89,7 @@ def handler(event, context):
             'color': '#D00000',
             'fields':[
                 {
-                    'title': 'Logg message',
+                    'title': 'Log message',
                     'value': res['loggingMessage'],
                     'short': False
                 }
